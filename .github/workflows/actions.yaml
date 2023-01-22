@@ -1,0 +1,100 @@
+# This is a basic workflow to help you get started with Actions
+
+name: CI
+
+# Controls when the workflow will run
+on:
+  # Triggers the workflow on push and pull request events for main and develop branch
+  push:
+    branches: [ main, develop ]
+
+  pull_request:
+    branches: [ main, develop ]
+
+  # Allows you to run this workflow manually from the Actions tab
+  workflow_dispatch:
+
+# A workflow run is made up of one or more jobs that can run sequentially or in parallel
+jobs:
+  # This workflow contains a single job called "build"
+  backend-tests:
+    # The type of runner that the job will run on
+    runs-on: ubuntu-latest
+
+    # Steps represent a sequence of tasks that will be executed as part of the job
+    steps:
+      # Checks-out your repository under $GITHUB_WORKSPACE, so your job can access it
+      - uses: actions/checkout@v2
+      
+      - name: Setup Python
+        uses: actions/setup-python@v2.3.1
+        with:
+          # Version range or exact version of a Python version to use, using SemVer's version range syntax.
+          python-version: 3.8
+      
+      - name: Restore virtualenv   
+        uses: syphar/restore-virtualenv@v1
+        id: cache-virtualenv
+        with:
+          requirement_files: backend/requirements.txt
+
+      - name: Restore pip download cache  
+        uses: syphar/restore-pip-download-cache@v1
+        if: steps.cache-virtualenv.outputs.cache-hit != 'true'
+
+      - name: Install packages
+        run: pip install -r backend/requirements.txt
+        if: steps.cache-virtualenv.outputs.cache-hit != 'true'
+
+      - name: Ensure migrations are up to date
+        run: python backend/manage.py makemigrations --check --dry-run
+
+      - name: Run tests
+        run: python backend/manage.py test backend/
+
+  build-frontend:
+
+    runs-on: ubuntu-latest
+
+    permissions:
+      contents: write # for making a release
+
+    steps:
+      - uses: actions/checkout@v2
+
+      - name: Setup Node
+        uses: actions/setup-node@v3
+        with:
+          node-version: '16'
+          cache: 'npm'
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Install packages
+        working-directory: frontend
+        run: npm install
+
+      - name: Build
+        working-directory: frontend
+        run: CI=false npm run build
+
+      - uses: papeloto/action-zip@v1
+        with:
+          files: frontend/build/
+          dest: frontend.zip
+
+      - name: Save frontend build
+        uses: actions/upload-artifact@v3
+        with:
+          name: frontend.zip
+          path: frontend.zip
+
+      - name: Make release
+        uses: ncipollo/release-action@v1
+        if: github.event_name == 'push'
+        with:
+          name: ${{ github.ref_name }}
+          tag: 'auto-build-${{ github.run_number }}'
+          commit: ${{ github.sha }}
+          artifacts: frontend.zip
+          prerelease: true
+          token: ${{ secrets.GITHUB_TOKEN }}
